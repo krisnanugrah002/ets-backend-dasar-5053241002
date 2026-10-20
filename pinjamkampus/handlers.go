@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type App struct {
@@ -62,7 +64,8 @@ func (a *App) handleCreateSumberDaya(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.Nama = strings.TrimSpace(req.Nama)
-	if req.Nama == "" || len(req.Nama) > 50 {
+	req.Jenis = strings.TrimSpace(req.Jenis)
+	if req.Nama == "" || utf8.RuneCountInString(req.Nama) > 50 {
 		sendError(w, http.StatusBadRequest, "Nama tidak valid")
 		return
 	}
@@ -122,9 +125,10 @@ func (a *App) handleGetSumberDayaByID(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- Validasi & Bentrok ---
-func validasiPeminjaman(req Peminjaman, store *Store) (int, string) {
+func validasiPeminjaman(req *Peminjaman, store *Store) (int, string) {
 	req.Peminjam = strings.TrimSpace(req.Peminjam)
-	if req.Peminjam == "" || len(req.Peminjam) > 50 {
+	req.Tanggal = strings.TrimSpace(req.Tanggal)
+	if req.Peminjam == "" || utf8.RuneCountInString(req.Peminjam) > 50 {
 		return http.StatusBadRequest, "Peminjam tidak valid"
 	}
 	if _, err := time.Parse("2006-01-02", req.Tanggal); err != nil {
@@ -143,8 +147,10 @@ func validasiPeminjaman(req Peminjaman, store *Store) (int, string) {
 	return 200, ""
 }
 
-func cekBentrok(req Peminjaman, store *Store, ignoreID int) bool {
+func cekBentrok(req Peminjaman, store *Store, ignoreID int) (bool, []int) {
 	terpakai := make([]int, 9)
+	var pemKandidat []Peminjaman
+
 	for _, p := range store.peminjaman {
 		if p.SumberDayaID == req.SumberDayaID && p.Tanggal == req.Tanggal && p.ID != ignoreID {
 			// Persona C: menahan slot jika diajukan atau disetujui
@@ -152,16 +158,35 @@ func cekBentrok(req Peminjaman, store *Store, ignoreID int) bool {
 				for i := p.SlotMulai; i <= p.SlotSelesai; i++ {
 					terpakai[i] += p.Jumlah
 				}
+				// Irisan rentang slot (Change Request B)
+				if p.SlotMulai <= req.SlotSelesai && req.SlotMulai <= p.SlotSelesai {
+					pemKandidat = append(pemKandidat, p)
+				}
 			}
 		}
 	}
 	sd := store.sumberDaya[req.SumberDayaID]
+	bentrok := false
 	for i := req.SlotMulai; i <= req.SlotSelesai; i++ {
 		if terpakai[i]+req.Jumlah > sd.Stok {
-			return true
+			bentrok = true
+			break
 		}
 	}
-	return false
+	if !bentrok {
+		return false, nil
+	}
+
+	sort.Slice(pemKandidat, func(i, j int) bool {
+		return pemKandidat[i].ID < pemKandidat[j].ID
+	})
+
+	bentrokDengan := make([]int, 0, len(pemKandidat))
+	for _, p := range pemKandidat {
+		bentrokDengan = append(bentrokDengan, p.ID)
+	}
+
+	return true, bentrokDengan
 }
 
 // Handler Peminjaman
@@ -175,19 +200,23 @@ func (a *App) handleCreatePeminjaman(w http.ResponseWriter, r *http.Request) {
 	a.store.mu.Lock()
 	defer a.store.mu.Unlock()
 
-	if code, msg := validasiPeminjaman(req, a.store); code != 200 {
+	if code, msg := validasiPeminjaman(&req, a.store); code != 200 {
 		sendError(w, code, msg)
 		return
 	}
-	if cekBentrok(req, a.store, 0) {
-		sendError(w, http.StatusConflict, "Slot bentrok")
+	if bentrok, bentrokIDs := cekBentrok(req, a.store, 0); bentrok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":          "slot sudah terpakai",
+			"bentrok_dengan": bentrokIDs,
+		})
 		return
 	}
 
 	req.ID = a.store.nextPemID
 	req.Status = "diajukan" // Khas Persona C
 	req.Alasan = ""
-	req.Peminjam = strings.TrimSpace(req.Peminjam)
 
 	a.store.peminjaman[req.ID] = req
 	a.store.nextPemID++
@@ -196,9 +225,9 @@ func (a *App) handleCreatePeminjaman(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleGetPeminjaman(w http.ResponseWriter, r *http.Request) {
-	qSD := r.URL.Query().Get("sumber_daya_id")
-	qTgl := r.URL.Query().Get("tanggal")
-	qStatus := r.URL.Query().Get("status")
+	qSD := strings.TrimSpace(r.URL.Query().Get("sumber_daya_id"))
+	qTgl := strings.TrimSpace(r.URL.Query().Get("tanggal"))
+	qStatus := strings.TrimSpace(r.URL.Query().Get("status"))
 
 	var filterSD int
 	var err error
@@ -274,7 +303,7 @@ func (a *App) handleUpdatePeminjaman(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if code, msg := validasiPeminjaman(req, a.store); code != 200 {
+	if code, msg := validasiPeminjaman(&req, a.store); code != 200 {
 		sendError(w, code, msg)
 		return
 	}
@@ -282,13 +311,12 @@ func (a *App) handleUpdatePeminjaman(w http.ResponseWriter, r *http.Request) {
 	req.Status = oldP.Status
 	req.Alasan = oldP.Alasan
 
-	if cekBentrok(req, a.store, id) {
+	if bentrok, _ := cekBentrok(req, a.store, id); bentrok {
 		sendError(w, http.StatusConflict, "Slot bentrok")
 		return
 	}
 
 	req.ID = id
-	req.Peminjam = strings.TrimSpace(req.Peminjam)
 	a.store.peminjaman[id] = req
 
 	sendJSON(w, http.StatusOK, req)
@@ -336,11 +364,22 @@ func (a *App) handleSetujui(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleTolak(w http.ResponseWriter, r *http.Request) {
+	// Urutan pemeriksaan: id bukan angka (400), peminjaman tidak ada (404), body tolak tidak valid (400), terakhir status tidak sesuai (409)
 	id, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil {
 		sendError(w, http.StatusBadRequest, "ID tidak valid")
 		return
 	}
+
+	a.store.mu.Lock()
+	defer a.store.mu.Unlock()
+
+	p, ok := a.store.peminjaman[id]
+	if !ok {
+		sendError(w, http.StatusNotFound, "Peminjaman tidak ada")
+		return
+	}
+
 	var req struct {
 		Alasan string `json:"alasan"`
 	}
@@ -349,18 +388,11 @@ func (a *App) handleTolak(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Alasan = strings.TrimSpace(req.Alasan)
-	if req.Alasan == "" || len(req.Alasan) > 100 {
+	if req.Alasan == "" || utf8.RuneCountInString(req.Alasan) > 100 {
 		sendError(w, http.StatusBadRequest, "Alasan wajib diisi, max 100 char")
 		return
 	}
 
-	a.store.mu.Lock()
-	defer a.store.mu.Unlock()
-	p, ok := a.store.peminjaman[id]
-	if !ok {
-		sendError(w, http.StatusNotFound, "Peminjaman tidak ada")
-		return
-	}
 	if p.Status != "diajukan" {
 		sendError(w, http.StatusConflict, "Status bukan diajukan")
 		return
