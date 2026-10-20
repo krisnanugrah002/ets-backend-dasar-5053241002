@@ -1,10 +1,14 @@
 # PROSES
 
 ## 1. Persona dan masalahnya
-(2-3 kalimat dengan kata-katamu sendiri: siapa pengguna persona kamu, masalah apa yang diselesaikan fitur khasnya.)
+Pengguna adalah Admin Himpunan Mahasiswa.
+Masalah yang diselesaikan adalah ruang himpunan tidak boleh langsung terpakai
 
 ## 2. Rancangan struktur data
-(Tulis struct dan slice/map apa yang kamu simpan, dan kenapa dipilih begitu. Rancang ini sebelum menulis kode, lalu catat kalau berubah di tengah jalan.)
+- `SumberDaya`: struct menyimpan ID, nama, jenis, dan stok.
+- `Peminjaman`: struct menyimpan ID, ID sumber daya, peminjam, tanggal, rentang slot, jumlah, status (default `"diajukan"`), dan alasan (default `""`).
+- Penyimpanan *in-memory* memakai `map[int]SumberDaya` dan `map[int]Peminjaman`.
+- Menggunakan `sync.Mutex` untuk memastikan keamanan data saat *concurrency*.
 
 ## 3. Satu keputusan desain
 (Satu keputusan yang kamu ambil, pilihan lain yang kamu pertimbangkan, dan alasanmu memilih yang ini. Contoh: kenapa cek bentrok per slot, bukan per rentang.)

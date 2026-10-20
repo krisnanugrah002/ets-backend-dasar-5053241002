@@ -1,6 +1,6 @@
 # PinjamKampus API
-
-- Nama dan NRP: Krisna Anugrah Arianto Heru Putro
+- Nama: Krisna Anugrah Arianto Heru Putro
+- NRP: 5053241002
 - Persona: Persona 3
 - Cara menjalankan: `go run .` lalu buka http://localhost:8080
 
