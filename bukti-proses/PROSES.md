@@ -11,7 +11,7 @@ Masalah yang diselesaikan adalah ruang himpunan tidak boleh langsung terpakai. S
 - **Concurrency:** Data dibungkus dalam struct `Store` yang memiliki `sync.Mutex` agar aman saat diakses dari goroutine yang berjalan bersamaan.
 
 ## 3. Satu keputusan desain
-(Satu keputusan yang kamu ambil, pilihan lain yang kamu pertimbangkan, dan alasanmu memilih yang ini. Contoh: kenapa cek bentrok per slot, bukan per rentang.)
+Sesuai dengan permintaan Change Request B yang mengharuskan hasil `bentrok_dengan` diurutkan secara ID, saya menggunakan fungsi `sort.Slice`.Seluruh objek peminjaman yang beririsan ke dalam sebuah *slice* sementara bernama `pemKandidat`. Setelah iterasi `map` selesai dan bentrok terkonfirmasi karena kapasitas terlampaui, *slice* `pemKandidat` tersebut diurutkan berdasarkan `ID` naik, lalu disalin ke *slice* `bentrokDengan` bertipe `[]int` sebagai hasil akhir. Hal ini memastikan keluaran array JSON selalu konsisten.
 
 ## 4. Bug atau kendala (minimal dua)
 ### Bug 1
@@ -20,9 +20,12 @@ Masalah yang diselesaikan adalah ruang himpunan tidak boleh langsung terpakai. S
 - Penyebab dan solusi: Penyebabnya ada . di akhir URL sehingga membuat 404. Solusinya menghapus . tersebut.
 
 ### Bug 2
-- Gejala:
-- Cara menemukan:
-- Penyebab dan solusi:
+- Gejala: Terjadi masalah pada pengujian postman
+- Cara menemukan: menggunakan postman
+- Penyebab dan solusi: Memperbaiki request
 
 ## 5. Change request
-(Apa yang diminta, bagian kode mana yang kamu ubah, dan satu keputusan desain yang kamu ambil.)
+**Change Request B (Daftar Bentrok):**
+Saat terjadi bentrok pada `POST /peminjaman`, sistem kini mengembalikan HTTP 409 beserta field `bentrok_dengan` yang memuat array ID peminjaman yang menghalangi rentang slot, diurutkan secara naik[cite: 6].
+**Keputusan Desain:** 
+Karena penyimpanan menggunakan tipe data `map` di Go yang urutan iterasinya selalu acak, saya memutuskan untuk mengumpulkan seluruh objek peminjaman yang beririsan ke dalam sebuah *slice* sementara bernama `pemKandidat`[cite: 9]. Setelah iterasi `map` selesai, saya memakai fungsi `sort.Slice` untuk mengurutkan objek di dalam *slice* tersebut berdasarkan `ID` naik[cite: 9]. Setelah urut, barulah ID-nya diekstrak ke dalam array `[]int` sebagai hasil akhir[cite: 9]. Ini memastikan keluaran JSON selalu konsisten sesuai permintaan CR[cite: 6].
